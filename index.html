@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>World Cup 2026 — Prediction Pool</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --green:#0a7d3c; --green-d:#075c2c; --gold:#f3c623; --ink:#11261a;
@@ -181,6 +182,41 @@
     </div>
   </section>
 
+  <!-- CLOUD -->
+  <section class="tab" data-tab="cloud">
+    <div class="card">
+      <h2>☁ Shared online pool <span class="tag" id="cloudTag">not connected</span></h2>
+      <p class="sub">Connect a free Supabase database so everyone's bets save to one shared place and appear automatically — no files to send. Set this up once on your device, then share the special link below.</p>
+
+      <h3>Step 1 — Create a free database (≈5 min, once)</h3>
+      <ol class="sub" style="line-height:1.7">
+        <li>Go to <b>supabase.com</b> → <b>Start your project</b> → sign in with <b>GitHub</b>.</li>
+        <li>Click <b>New project</b>, give it a name + database password, pick a region, and wait ~2 min for it to finish.</li>
+        <li>Open <b>SQL Editor</b> (left menu) → <b>New query</b> → paste the snippet below → <b>Run</b>.</li>
+        <li>Open <b>Project Settings → API</b>. Copy the <b>Project URL</b> and the <b>anon public</b> key.</li>
+      </ol>
+      <div class="row" style="margin:6px 0"><button class="ghost small" onclick="copySQL()">⧉ Copy database setup SQL</button><span id="sqlCopied" class="muted"></span></div>
+      <pre id="sqlBox" style="white-space:pre-wrap;background:#0f1f16;color:#bfe8cd;padding:12px;border-radius:10px;font-size:12px;overflow:auto;max-height:160px"></pre>
+
+      <h3>Step 2 — Connect this app</h3>
+      <div class="grid" style="max-width:560px">
+        <div><label>Project URL</label><br><input id="cloudUrl" style="width:100%" placeholder="https://xxxx.supabase.co"></div>
+        <div><label>anon public key</label><br><input id="cloudKey" style="width:100%" placeholder="eyJhbGciOi..."></div>
+        <label class="row" style="gap:6px"><input type="checkbox" id="cloudOrg"> I am the organizer (this device controls teams, results &amp; scoring)</label>
+        <div class="row"><button class="primary" onclick="cloudConnect()">Connect</button>
+          <button class="ghost" onclick="cloudDisconnect()">Disconnect</button>
+          <span id="cloudMsg" class="muted"></span></div>
+      </div>
+
+      <h3>Step 3 — Share with the players</h3>
+      <p class="sub">Send everyone this link. Opening it auto-connects them to your shared pool — they just pick/add their name and bet. Their entries appear for you live.</p>
+      <div class="row"><input id="shareLink" style="flex:1;min-width:240px" readonly placeholder="Connect first to generate the link">
+        <button class="gold" onclick="copyShare()">⧉ Copy link</button></div>
+      <div class="note" id="cloudNote">⚠ Players need the version of the app that has this Cloud tab. After you connect, re-upload <b>index.html</b> to GitHub once; from then on the link carries the settings — no more uploads needed.</div>
+      <div class="row" style="margin-top:8px"><button class="ghost small" onclick="cloudPull(true)">⟳ Sync from cloud now</button><span id="cloudPulled" class="muted"></span></div>
+    </div>
+  </section>
+
   <!-- RULES -->
   <section class="tab" data-tab="rules">
     <div class="card">
@@ -251,7 +287,7 @@ function save(){ localStorage.setItem("wc26pool",JSON.stringify(S)); }
 const uid=()=>Math.random().toString(36).slice(2,9);
 
 /* ============================== NAV ============================== */
-const TABS=[["setup","Setup"],["predict","Predictions"],["live","Live"],["results","Results"],["board","Leaderboard"],["rules","Rules"]];
+const TABS=[["setup","Setup"],["predict","Predictions"],["live","Live"],["results","Results"],["board","Leaderboard"],["cloud","Cloud"],["rules","Rules"]];
 function buildNav(){
   const nav=document.getElementById("nav"); nav.innerHTML="";
   TABS.forEach(([id,label])=>{
@@ -280,19 +316,20 @@ function renderGroupsEditor(){
   });
   document.getElementById("groupsLockTag").textContent=`${GROUPS.length} groups · ${GROUPS.length*4} teams`;
 }
-function editTeam(g,i,v){ S.groups[g][i]=v; save(); }
-function seedTeams(){ if(!confirm("Reset all groups to the official 2026 World Cup teams? This overwrites any edits to team names."))return; GROUPS.forEach(g=>S.groups[g]=OFFICIAL[g].slice()); save(); renderGroupsEditor(); }
+function editTeam(g,i,v){ S.groups[g][i]=v; save(); cloudTouchMeta(); }
+function seedTeams(){ if(!confirm("Reset all groups to the official 2026 World Cup teams? This overwrites any edits to team names."))return; GROUPS.forEach(g=>S.groups[g]=OFFICIAL[g].slice()); save(); cloudTouchMeta(); renderGroupsEditor(); }
 function allTeams(){ let t=[]; GROUPS.forEach(g=>t=t.concat(S.groups[g])); return t.filter(x=>x&&x.trim()); }
 
 /* ============================== SETUP: GAMBLERS ============================== */
 function addGambler(){
   const inp=document.getElementById("newGambler"); const name=inp.value.trim(); if(!name)return;
   S.gamblers.push({id:uid(),name,preds:{groups:{},r32:{},r16:{},qf:{},semis:[],podium:[]}});
-  inp.value=""; if(!S.activeGambler)S.activeGambler=S.gamblers[S.gamblers.length-1].id; save(); renderGamblers(); refreshGamblerSelects();
+  inp.value=""; if(!S.activeGambler)S.activeGambler=S.gamblers[S.gamblers.length-1].id; save(); cloudTouchGambler(S.gamblers[S.gamblers.length-1]); renderGamblers(); refreshGamblerSelects();
 }
 function delGambler(id){ if(!confirm("Remove this gambler and their predictions?"))return;
+  const gone=S.gamblers.find(x=>x.id===id);
   S.gamblers=S.gamblers.filter(x=>x.id!==id); if(S.activeGambler===id)S.activeGambler=S.gamblers[0]?.id||null;
-  save(); renderGamblers(); refreshGamblerSelects(); }
+  save(); if(gone)cloudDeleteGambler(gone.name); renderGamblers(); refreshGamblerSelects(); }
 function renderGamblers(){
   const tb=document.getElementById("gamblersList"); tb.innerHTML="";
   if(!S.gamblers.length){tb.innerHTML=`<tr><td class="empty">No gamblers yet — add some above.</td></tr>`;return;}
@@ -347,7 +384,7 @@ function renderPredict(){
   const cs=card("Bonus — Semifinalists","Pick the 4 teams you think will reach the semi-finals. Lock before Phase 3 (Round of 16) starts.");
   const sf=p.preds.semis||[];
   for(let i=0;i<4;i++){
-    cs.appendChild(teamPicker(allTeams(),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); },`Semifinalist ${i+1}`));
+    cs.appendChild(teamPicker(allTeams(),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); cloudTouchGambler(p); },`Semifinalist ${i+1}`));
   }
   body.appendChild(cs);
 
@@ -356,11 +393,11 @@ function renderPredict(){
   /* Podium bonus */
   const cp=card("Bonus — Podium (30 pts)","Pick the final 1st, 2nd and 3rd place of the World Cup.");
   ["🥇 Champion (1st)","🥈 Runner-up (2nd)","🥉 Third place"].forEach((lbl,i)=>{
-    cp.appendChild(teamPicker(allTeams(),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); },lbl));
+    cp.appendChild(teamPicker(allTeams(),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); cloudTouchGambler(p); },lbl));
   });
   body.appendChild(cp);
 }
-function setGroupPred(g,pos,v){ const p=curGambler(); if(!p.preds.groups[g])p.preds.groups[g]=["","","",""]; p.preds.groups[g][pos]=v; save(); }
+function setGroupPred(g,pos,v){ const p=curGambler(); if(!p.preds.groups[g])p.preds.groups[g]=["","","",""]; p.preds.groups[g][pos]=v; save(); cloudTouchGambler(p); }
 
 function knockoutPredCard(key,title,p){
   const matches=S.rounds[key]||[];
@@ -378,7 +415,7 @@ function knockoutPredCard(key,title,p){
   });
   return c;
 }
-function setKO(key,i,v){ const p=curGambler(); if(!p.preds[key])p.preds[key]={}; p.preds[key][i]=v; save(); }
+function setKO(key,i,v){ const p=curGambler(); if(!p.preds[key])p.preds[key]={}; p.preds[key][i]=v; save(); cloudTouchGambler(p); }
 
 /* ============================== RESULTS (admin) ============================== */
 function renderResults(){
@@ -407,7 +444,7 @@ function renderResults(){
 
   /* Semifinalists actual */
   const cs=card("Bonus — Actual semifinalists","The 4 teams that actually reached the semi-finals.");
-  for(let i=0;i<4;i++){ cs.appendChild(teamPicker(allTeams(),(S.results.semis||[])[i]||"",v=>{S.results.semis[i]=v;save();renderBoard();},`Semifinalist ${i+1}`)); }
+  for(let i=0;i<4;i++){ cs.appendChild(teamPicker(allTeams(),(S.results.semis||[])[i]||"",v=>{S.results.semis[i]=v;save();cloudTouchMeta();renderBoard();},`Semifinalist ${i+1}`)); }
   body.appendChild(cs);
 
   body.appendChild(koResultCard("qf","Phase 4 — Quarter-finals",4));
@@ -415,11 +452,11 @@ function renderResults(){
   /* Podium actual */
   const cp=card("Bonus — Actual podium","Final 1st / 2nd / 3rd of the Cup.");
   ["🥇 Champion","🥈 Runner-up","🥉 Third place"].forEach((lbl,i)=>{
-    cp.appendChild(teamPicker(allTeams(),(S.results.podium||[])[i]||"",v=>{S.results.podium[i]=v;save();renderBoard();},lbl));
+    cp.appendChild(teamPicker(allTeams(),(S.results.podium||[])[i]||"",v=>{S.results.podium[i]=v;save();cloudTouchMeta();renderBoard();},lbl));
   });
   body.appendChild(cp);
 }
-function setResGroup(g,pos,v){ if(!S.results.groups[g])S.results.groups[g]=["","","",""]; S.results.groups[g][pos]=v; save(); renderBoard(); }
+function setResGroup(g,pos,v){ if(!S.results.groups[g])S.results.groups[g]=["","","",""]; S.results.groups[g][pos]=v; save(); cloudTouchMeta(); renderBoard(); }
 
 function koResultCard(key,title,count){
   const c=card(title,`Define the ${count} pairings, then mark the actual winner of each.`);
@@ -444,8 +481,8 @@ function koResultCard(key,title,count){
   c.appendChild(tb);
   return c;
 }
-function setPair(key,i,side,v){ if(!S.rounds[key])S.rounds[key]=[]; if(!S.rounds[key][i])S.rounds[key][i]={a:"",b:""}; S.rounds[key][i][side]=v; save(); renderResults(); }
-function setWinner(key,i,v){ if(!S.results[key])S.results[key]={}; S.results[key][i]=v; save(); renderBoard(); }
+function setPair(key,i,side,v){ if(!S.rounds[key])S.rounds[key]=[]; if(!S.rounds[key][i])S.rounds[key][i]={a:"",b:""}; S.rounds[key][i][side]=v; save(); cloudTouchMeta(); renderResults(); }
+function setWinner(key,i,v){ if(!S.results[key])S.results[key]={}; S.results[key][i]=v; save(); cloudTouchMeta(); renderBoard(); }
 
 /* ============================== SCORING ============================== */
 function scoreGambler(p){
@@ -522,7 +559,7 @@ function loadConfigInputs(){
 function saveConfig(){
   const num=id=>parseFloat(document.getElementById(id).value)||0;
   S.config={top3:num("cfg_top3"),order:num("cfg_order"),r32:num("cfg_r32"),r16:num("cfg_r16"),qf:num("cfg_qf"),semi:num("cfg_semi"),podium:num("cfg_podium")};
-  save(); document.getElementById("cfgSaved").textContent="✓ Saved"; setTimeout(()=>document.getElementById("cfgSaved").textContent="",1500); renderBoard();
+  save(); cloudTouchMeta(); document.getElementById("cfgSaved").textContent="✓ Saved"; setTimeout(()=>document.getElementById("cfgSaved").textContent="",1500); renderBoard();
 }
 
 /* ============================== LIVE (TheSportsDB) ============================== */
@@ -581,7 +618,7 @@ async function liveSync(full){
     }
     S.live.lastSync=Date.now();
     applyLiveResults();
-    save();
+    save(); cloudTouchMeta();
     prog.textContent=`Synced ${fetched} day(s), ${Object.keys(S.live.events).length} matches cached.`;
   } finally { syncing=false; if(btn)btn.disabled=false; renderLive(); renderResults(); renderBoard(); }
 }
@@ -677,6 +714,123 @@ function renderLive(){
   }).join("");
 }
 
+/* ============================== CLOUD (Supabase) ============================== */
+const CLOUD_SQL=`-- World Cup pool: shared tables + open access (low-stakes friendly pool)
+create table if not exists wc_entries (name text primary key, data jsonb, updated_at timestamptz default now());
+create table if not exists wc_meta (id text primary key, data jsonb, updated_at timestamptz default now());
+alter table wc_entries enable row level security;
+alter table wc_meta enable row level security;
+do $$ begin
+  create policy wc_e_all on wc_entries for all using (true) with check (true);
+  create policy wc_m_all on wc_meta for all using (true) with check (true);
+exception when duplicate_object then null; end $$;
+alter publication supabase_realtime add table wc_entries;
+alter publication supabase_realtime add table wc_meta;`;
+
+let sb=null, sbChan=null, pullTimer=null, pushTimer=null;
+function cloudCfg(){ try{return JSON.parse(localStorage.getItem("wc26cloud")||"null");}catch(e){return null;} }
+function isOrganizer(){ return localStorage.getItem("wc26org")==="1"; }
+function cloudConnected(){ return !!sb; }
+
+function initCloud(){
+  // config can arrive via share link (#c=...) or be stored locally
+  const h=location.hash.match(/c=([^&]+)/);
+  if(h){ try{ const cfg=JSON.parse(atob(decodeURIComponent(h[1]))); if(cfg.u&&cfg.k) localStorage.setItem("wc26cloud",JSON.stringify(cfg)); }catch(e){} }
+  const cfg=cloudCfg();
+  if(cfg&&cfg.u&&cfg.k&&window.supabase){ startSupabase(cfg.u,cfg.k,false); }
+  renderCloud();
+}
+function startSupabase(url,key,seed){
+  if(!window.supabase){ setCloudMsg("Supabase library didn't load (check connection)."); return; }
+  try{ sb=window.supabase.createClient(url,key,{realtime:{params:{eventsPerSecond:2}}}); }
+  catch(e){ setCloudMsg("Bad URL/key: "+e.message); sb=null; return; }
+  if(seed){ // push what this device already has, so nothing is lost
+    S.gamblers.forEach(g=>cloudUpsertGambler(g));
+    if(isOrganizer()) cloudUpsertMeta();
+  }
+  cloudPull(false);
+  subscribe();
+  renderCloud();
+}
+function subscribe(){
+  if(!sb) return; if(sbChan){ sb.removeChannel(sbChan); sbChan=null; }
+  sbChan=sb.channel("wcpool")
+    .on("postgres_changes",{event:"*",schema:"public",table:"wc_entries"},()=>schedulePull())
+    .on("postgres_changes",{event:"*",schema:"public",table:"wc_meta"},()=>schedulePull())
+    .subscribe();
+}
+function schedulePull(){ clearTimeout(pullTimer); pullTimer=setTimeout(()=>cloudPull(false),600); }
+
+async function cloudPull(manual){
+  if(!sb){ if(manual)setCloudMsg("Not connected."); return; }
+  try{
+    const [er,mr]=await Promise.all([
+      sb.from("wc_entries").select("name,data"),
+      sb.from("wc_meta").select("data").eq("id","pool").maybeSingle()
+    ]);
+    if(er.error) throw er.error;
+    const ents=er.data||[];
+    const activeName=(curGambler()||{}).name;
+    // rebuild gamblers from cloud, preserving the in-progress edits of MY active gambler
+    const keepActive=S.gamblers.find(g=>g.name===activeName);
+    const next=[];
+    ents.forEach(row=>{
+      if(row.name===activeName && keepActive){ next.push(keepActive); return; }
+      const existing=S.gamblers.find(g=>g.name.toLowerCase()===String(row.name).toLowerCase());
+      next.push({id:existing?existing.id:uid(), name:row.name,
+        preds:Object.assign({groups:{},r32:{},r16:{},qf:{},semis:[],podium:[]}, row.data||{})});
+    });
+    // keep any local gambler not yet in cloud (will push on next edit)
+    S.gamblers.forEach(g=>{ if(!next.find(n=>n.name.toLowerCase()===g.name.toLowerCase())) next.push(g); });
+    S.gamblers=next;
+    if(S.activeGambler && !S.gamblers.find(g=>g.id===S.activeGambler)) S.activeGambler=S.gamblers[0]?.id||null;
+    // meta (teams/results/rounds/config) — applied unless I'm the organizer (I'm the source of truth)
+    if(!isOrganizer() && mr&&mr.data&&mr.data.data){ const m=mr.data.data;
+      if(m.groups)S.groups=m.groups; if(m.rounds)S.rounds=m.rounds; if(m.results)S.results=m.results; if(m.config)S.config=Object.assign({},DEFAULT_CFG,m.config); }
+    save(); renderAll();
+    const pl=document.getElementById("cloudPulled"); if(pl){pl.textContent="✓ "+new Date().toLocaleTimeString(); setTimeout(()=>pl.textContent="",2500);}
+  }catch(e){ setCloudMsg("Sync error: "+(e.message||e)); }
+}
+
+async function cloudUpsertGambler(g){ if(!sb||!g) return;
+  try{ await sb.from("wc_entries").upsert({name:g.name,data:g.preds,updated_at:new Date().toISOString()},{onConflict:"name"}); }catch(e){} }
+async function cloudDeleteGambler(name){ if(!sb) return; try{ await sb.from("wc_entries").delete().eq("name",name); }catch(e){} }
+async function cloudUpsertMeta(){ if(!sb||!isOrganizer()) return;
+  try{ await sb.from("wc_meta").upsert({id:"pool",data:{groups:S.groups,rounds:S.rounds,results:S.results,config:S.config},updated_at:new Date().toISOString()},{onConflict:"id"}); }catch(e){} }
+
+// debounced hooks called from edit handlers
+function cloudTouchGambler(g){ if(!sb||!g) return; clearTimeout(pushTimer); pushTimer=setTimeout(()=>cloudUpsertGambler(g),500); }
+function cloudTouchMeta(){ if(!sb||!isOrganizer()) return; clearTimeout(pushTimer); pushTimer=setTimeout(cloudUpsertMeta,500); }
+
+function cloudConnect(){
+  const url=document.getElementById("cloudUrl").value.trim().replace(/\/+$/,"");
+  const key=document.getElementById("cloudKey").value.trim();
+  if(!/^https:\/\/.+\.supabase\.co$/.test(url)){ setCloudMsg("URL should look like https://xxxx.supabase.co"); return; }
+  if(key.length<30){ setCloudMsg("That anon key looks too short."); return; }
+  localStorage.setItem("wc26cloud",JSON.stringify({u:url,k:key}));
+  localStorage.setItem("wc26org",document.getElementById("cloudOrg").checked?"1":"0");
+  setCloudMsg("Connecting…"); startSupabase(url,key,true); setCloudMsg("Connected ✓");
+}
+function cloudDisconnect(){ if(sbChan&&sb){sb.removeChannel(sbChan);} sb=null;sbChan=null;
+  localStorage.removeItem("wc26cloud"); setCloudMsg("Disconnected."); renderCloud(); }
+function setCloudMsg(m){ const e=document.getElementById("cloudMsg"); if(e)e.textContent=m; }
+function shareUrl(){ const cfg=cloudCfg(); if(!cfg)return"";
+  return location.origin+location.pathname+"#c="+encodeURIComponent(btoa(JSON.stringify(cfg))); }
+function copyShare(){ const l=shareUrl(); if(!l){setCloudMsg("Connect first.");return;}
+  navigator.clipboard.writeText(l); document.getElementById("shareLink").value=l; setCloudMsg("Link copied ✓"); }
+function copySQL(){ navigator.clipboard.writeText(CLOUD_SQL); const e=document.getElementById("sqlCopied"); if(e){e.textContent="Copied ✓";setTimeout(()=>e.textContent="",1500);} }
+
+function renderCloud(){
+  const sqlBox=document.getElementById("sqlBox"); if(sqlBox)sqlBox.textContent=CLOUD_SQL;
+  const cfg=cloudCfg();
+  const u=document.getElementById("cloudUrl"), k=document.getElementById("cloudKey"), o=document.getElementById("cloudOrg");
+  if(u&&cfg)u.value=cfg.u||""; if(k&&cfg)k.value=cfg.k||""; if(o)o.checked=isOrganizer();
+  const tag=document.getElementById("cloudTag");
+  if(tag){ tag.textContent=cloudConnected()?(isOrganizer()?"connected · organizer":"connected"):"not connected";
+    tag.className="pill "+(cloudConnected()?"ok":"locked"); }
+  const sl=document.getElementById("shareLink"); if(sl)sl.value=cloudConnected()?shareUrl():"";
+}
+
 /* ============================== HELPERS ============================== */
 function card(title,sub){ const c=document.createElement("div"); c.className="card";
   c.innerHTML=`<h2>${esc(title)}</h2>${sub?`<p class="sub">${esc(sub)}</p>`:""}`; return c; }
@@ -735,11 +889,13 @@ function renderAll(){
   if(S.activeTab==="live")renderLive();
   if(S.activeTab==="results")renderResults();
   if(S.activeTab==="board")renderBoard();
+  if(S.activeTab==="cloud")renderCloud();
   // make sure active tab shown
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.tab===S.activeTab));
 }
 renderAll();
 if(S.live&&S.live.auto) toggleAuto(true);   // resume live auto-refresh from last session
+initCloud();                                 // connect to shared pool if configured (or via share link)
 </script>
 </body>
 </html>
