@@ -404,20 +404,29 @@ function renderPredict(){
 }
 function setGroupPred(g,pos,v){ const p=curGambler(); if(!p.preds.groups[g])p.preds.groups[g]=["","","",""]; p.preds.groups[g][pos]=v; save(); cloudTouchGambler(p); }
 
+const ROUND_COUNTS={r32:16,r16:8,qf:4};
 function knockoutPredCard(key,title,p){
   const matches=S.rounds[key]||[];
-  const c=card(title, matches.length? "Pick the winner of each match." : "Matches not defined yet — the admin sets the pairings in the Results tab once the previous phase is decided.");
-  if(!matches.length){ const e=document.createElement("div"); e.className="empty"; e.textContent="Pairings pending."; c.appendChild(e); return c; }
-  matches.forEach((m,i)=>{
-    const pick=(p.preds[key]||{})[i]||"";
+  const count=ROUND_COUNTS[key]||matches.length;                 // always show the full round (QF=4, R16=8, R32=16)
+  const anyDefined=matches.some(m=>m&&m.a&&m.b);
+  const c=card(title, anyDefined? "Pick the winner of each match."
+    : "Matchups appear here once the previous round is decided — auto-filled from live scores, or set by the organiser in the Results tab.");
+  for(let i=0;i<count;i++){
+    const m=matches[i]||{a:"",b:""};
     const d=document.createElement("div"); d.className="match";
-    d.innerHTML=`<select onchange="setKO('${key}',${i},this.value)">
-        <option value="">— winner —</option>
-        <option ${pick===m.a?'selected':''}>${esc(m.a)}</option>
-        <option ${pick===m.b?'selected':''}>${esc(m.b)}</option>
-      </select>`;
+    if(m.a&&m.b){
+      const pick=(p.preds[key]||{})[i]||"";
+      d.innerHTML=`<span class="vs">M${i+1}</span>
+        <select onchange="setKO('${key}',${i},this.value)">
+          <option value="">— winner —</option>
+          <option ${pick===m.a?'selected':''}>${esc(m.a)}</option>
+          <option ${pick===m.b?'selected':''}>${esc(m.b)}</option>
+        </select>`;
+    } else {
+      d.innerHTML=`<span class="vs">M${i+1}</span><span class="muted" style="font-size:13px">teams to be decided</span>`;
+    }
     c.appendChild(d);
-  });
+  }
   return c;
 }
 function setKO(key,i,v){ const p=curGambler(); if(!p.preds[key])p.preds[key]={}; p.preds[key][i]=v; save(); cloudTouchGambler(p); }
@@ -465,6 +474,14 @@ function setResGroup(g,pos,v){ if(!S.results.groups[g])S.results.groups[g]=["","
 
 function koResultCard(key,title,count){
   const c=card(title,`Define the ${count} pairings, then mark the actual winner of each.`);
+  if(key==="r32"){ const bar=document.createElement("div"); bar.className="row"; bar.style.marginBottom="10px";
+    bar.innerHTML=`<button class="primary small" onclick="generateR32()">⚙ Auto-fill from group standings</button>
+      <span class="muted" style="font-size:12px">Fills all 16 matchups from the official 2026 bracket once group results are in.</span>`;
+    c.appendChild(bar); }
+  if(key==="r16"||key==="qf"){ const bar=document.createElement("div"); bar.className="row"; bar.style.marginBottom="10px";
+    bar.innerHTML=`<button class="primary small" onclick="advanceBracket()">⚙ Rebuild from winners</button>
+      <span class="muted" style="font-size:12px">Builds these matchups automatically from the ${key==="r16"?"Round of 32":"Round of 16"} winners.</span>`;
+    c.appendChild(bar); }
   const tb=document.createElement("div");
   const matches=S.rounds[key]||[];
   const teams=allTeams();
@@ -487,7 +504,72 @@ function koResultCard(key,title,count){
   return c;
 }
 function setPair(key,i,side,v){ if(!S.rounds[key])S.rounds[key]=[]; if(!S.rounds[key][i])S.rounds[key][i]={a:"",b:""}; S.rounds[key][i][side]=v; save(); cloudTouchMeta(); renderResults(); }
-function setWinner(key,i,v){ if(!S.results[key])S.results[key]={}; S.results[key][i]=v; save(); cloudTouchMeta(); renderBoard(); }
+function setWinner(key,i,v){ if(!S.results[key])S.results[key]={}; S.results[key][i]=v; save(); cloudTouchMeta();
+  if(key==="r32"||key==="r16"){ advanceBracket(true); renderResults(); }   // cascade winner into the next round
+  renderBoard(); }
+
+/* ---- Auto-build the Round of 32 from group standings (official 2026 bracket template) ---- */
+// slot: {t:'1'|'2', g} = group winner/runner-up; {t:'3', groups:[...]} = a best third from one of those groups
+const R32_TEMPLATE=[
+  [{t:'2',g:'B'},{t:'2',g:'A'}],
+  [{t:'1',g:'E'},{t:'3',groups:['A','B','C','D','F']}],
+  [{t:'1',g:'F'},{t:'2',g:'C'}],
+  [{t:'1',g:'C'},{t:'2',g:'F'}],
+  [{t:'1',g:'I'},{t:'3',groups:['C','D','F','G','H']}],
+  [{t:'2',g:'E'},{t:'2',g:'I'}],
+  [{t:'1',g:'A'},{t:'3',groups:['C','E','F','H','I']}],
+  [{t:'1',g:'L'},{t:'3',groups:['E','H','I','J','K']}],
+  [{t:'1',g:'D'},{t:'3',groups:['B','E','F','I','J']}],
+  [{t:'1',g:'G'},{t:'3',groups:['A','E','H','I','J']}],
+  [{t:'2',g:'K'},{t:'2',g:'L'}],
+  [{t:'1',g:'H'},{t:'2',g:'J'}],
+  [{t:'1',g:'B'},{t:'3',groups:['E','F','G','I','J']}],
+  [{t:'1',g:'J'},{t:'2',g:'H'}],
+  [{t:'1',g:'K'},{t:'3',groups:['D','E','I','J','L']}],
+  [{t:'2',g:'D'},{t:'2',g:'G'}],
+];
+// rank the 12 third-placed teams (needs live match stats); returns best 8 as [{g,team},...]
+function bestThirds(){
+  const events=Object.values(S.live&&S.live.events||{});
+  const teamGroup={}; GROUPS.forEach(g=>S.groups[g].forEach(t=>teamGroup[t]=g));
+  const st={}; GROUPS.forEach(g=>S.groups[g].forEach(t=>st[t]={pts:0,gd:0,gf:0}));
+  events.forEach(ev=>{ if(!isFinished(ev))return; const h=matchTeam(ev.strHomeTeam),a=matchTeam(ev.strAwayTeam);
+    if(!h||!a||teamGroup[h]!==teamGroup[a])return; const hs=+ev.intHomeScore,as=+ev.intAwayScore;
+    if(Number.isNaN(hs)||Number.isNaN(as))return; st[h].gf+=hs;st[a].gf+=as;st[h].gd+=hs-as;st[a].gd+=as-hs;
+    if(hs>as)st[h].pts+=3; else if(as>hs)st[a].pts+=3; else {st[h].pts++;st[a].pts++;} });
+  const thirds=GROUPS.map(g=>{ const t=(S.results.groups[g]||[])[2]; return t?Object.assign({g,team:t},st[t]||{pts:0,gd:0,gf:0}):null; }).filter(Boolean);
+  thirds.sort((x,y)=> y.pts-x.pts||y.gd-x.gd||y.gf-x.gf||x.g.localeCompare(y.g));
+  return thirds.slice(0,8);
+}
+function generateR32(silent){
+  const ready=GROUPS.every(g=>(S.results.groups[g]||[]).filter(Boolean).length>=2);
+  if(!ready){ if(!silent)alert("First enter (or live-sync) the group standings — at least the top 2 of every group."); return false; }
+  const thirds=bestThirds(); const pool=thirds.slice();
+  const fill=slot=>{
+    if(slot.t==='1') return (S.results.groups[slot.g]||[])[0]||"";
+    if(slot.t==='2') return (S.results.groups[slot.g]||[])[1]||"";
+    const i=pool.findIndex(t=>slot.groups.includes(t.g));      // a best-third from an allowed group
+    return i>=0 ? pool.splice(i,1)[0].team : "";
+  };
+  S.rounds.r32=R32_TEMPLATE.map(([a,b])=>({a:fill(a),b:fill(b)}));
+  save(); cloudTouchMeta();
+  if(!silent){ renderResults(); renderBoard();
+    const missing=S.rounds.r32.filter(m=>!m.a||!m.b).length;
+    alert("Round of 32 filled from the group standings ✓"+(missing?`\n\n${missing} third-place slot(s) still blank — those need live match stats to rank the best thirds, or fill them yourself.`:"")); }
+  return true;
+}
+// Build R16 pairings from R32 winners, and QF pairings from R16 winners (official 2026 sequential tree).
+function advanceBracket(silent){
+  const r32w=S.results.r32||{}; const r16=[];
+  for(let i=0;i<8;i++) r16.push({a:r32w[2*i]||"", b:r32w[2*i+1]||""});     // M89=W73/W74, M90=W75/W76, ...
+  S.rounds.r16=r16;
+  const r16w=S.results.r16||{}; const qf=[];
+  for(let i=0;i<4;i++) qf.push({a:r16w[2*i]||"", b:r16w[2*i+1]||""});       // M97=W89/W90, ...
+  S.rounds.qf=qf;
+  save(); cloudTouchMeta();
+  if(!silent){ renderResults(); renderBoard();
+    alert("Round of 16 & Quarter-final matchups rebuilt from the winners entered ✓\nEmpty slots just mean that match hasn't been decided yet."); }
+}
 
 /* ============================== SCORING ============================== */
 function scoreGambler(p){
@@ -623,6 +705,8 @@ async function liveSync(full){
     }
     S.live.lastSync=Date.now();
     applyLiveResults();
+    if(!(S.rounds.r32&&S.rounds.r32.length)) generateR32(true);   // build R32 once groups are decided
+    for(let pass=0; pass<3; pass++){ advanceBracket(true); applyLiveResults(); }  // cascade R32→R16→QF as winners come in
     save(); cloudTouchMeta();
     prog.textContent=`Synced ${fetched} day(s), ${Object.keys(S.live.events).length} matches cached.`;
   } finally { syncing=false; if(btn)btn.disabled=false; renderLive(); renderResults(); renderBoard(); }
@@ -760,7 +844,7 @@ function startSupabase(url,key,seed){
   }
   cloudPull(false);
   subscribe();
-  if(sbPoll)clearInterval(sbPoll); sbPoll=setInterval(()=>cloudPull(false),8000);  // safety net if realtime drops
+  if(sbPoll)clearInterval(sbPoll); sbPoll=setInterval(()=>cloudPull(false),15000);  // safety net if realtime drops
   renderCloud();
 }
 function subscribe(){
@@ -773,22 +857,37 @@ function subscribe(){
 function schedulePull(){ clearTimeout(pullTimer); pullTimer=setTimeout(()=>cloudPull(false),600); }
 
 // merge a remote snapshot (entries keyed by name + meta object) into local state
+let lastRemoteSig=null;
 function applyRemote(entriesObj, metaData){
+  // Skip entirely when the remote snapshot is identical to what we last applied -> no flicker, no needless saves.
+  const sig=JSON.stringify([entriesObj, isOrganizer()?0:metaData]);
+  if(sig===lastRemoteSig) return;
+  lastRemoteSig=sig;
   const activeName=(curGambler()||{}).name;
   const keepActive=S.gamblers.find(g=>g.name===activeName);
   const next=[];
   Object.keys(entriesObj||{}).forEach(name=>{
-    if(name===activeName && keepActive){ next.push(keepActive); return; }     // protect in-progress edits
+    if(name===activeName && keepActive){ next.push(keepActive); return; }     // protect MY in-progress edits
     const existing=S.gamblers.find(g=>g.name.toLowerCase()===String(name).toLowerCase());
     next.push({id:existing?existing.id:uid(), name,
       preds:Object.assign({groups:{},r32:{},r16:{},qf:{},semis:[],podium:[]}, entriesObj[name]||{})});
   });
-  S.gamblers.forEach(g=>{ if(!next.find(n=>n.name.toLowerCase()===g.name.toLowerCase())) next.push(g); });
+  S.gamblers.forEach(g=>{ if(!next.find(n=>n.name.toLowerCase()===g.name.toLowerCase())) next.push(g); });  // keep local-only gamblers
   S.gamblers=next;
   if(S.activeGambler && !S.gamblers.find(g=>g.id===S.activeGambler)) S.activeGambler=S.gamblers[0]?.id||null;
   if(!isOrganizer() && metaData){ const m=metaData;                          // organizer is source of truth for meta
     if(m.groups)S.groups=m.groups; if(m.rounds)S.rounds=m.rounds; if(m.results)S.results=m.results; if(m.config)S.config=Object.assign({},DEFAULT_CFG,m.config); }
-  save(); renderAll();
+  save();
+  refreshFromRemote();
+}
+// Update views after a remote change WITHOUT rebuilding the predictions form (so typing is never interrupted).
+function refreshFromRemote(){
+  refreshGamblerSelects();
+  if(S.activeTab==="board") renderBoard();
+  else if(S.activeTab==="results") renderResults();
+  else if(S.activeTab==="setup"){ renderGroupsEditor(); renderGamblers(); }
+  else if(S.activeTab==="cloud") renderCloud();
+  // 'predict' tab is intentionally left alone here — your in-progress selections stay put.
 }
 async function cloudPull(manual){
   if(srvEnabled){ return serverPull(); }
