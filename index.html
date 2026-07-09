@@ -72,7 +72,17 @@
   .pos-select{display:grid;grid-template-columns:24px 1fr;gap:6px;align-items:center;margin-bottom:6px}
   .flag{font-size:15px}
   .tag{font-size:11px;background:#eef3ef;color:var(--muted);padding:2px 7px;border-radius:6px;font-weight:600}
-  @media(max-width:640px){header h1{font-size:16px}.score-big{font-size:26px}}
+  @media(max-width:640px){
+    header h1{font-size:16px}.score-big{font-size:26px}
+    main{padding:16px 10px 80px}
+    .card{padding:14px}
+    /* Leaderboard: on phones show only rank, name, total — hide the per-phase columns */
+    .board-table .phase-col{display:none}
+    .board-table th,.board-table td{padding:10px 8px}
+    .board-table td:nth-child(2){width:100%;font-size:15px}
+    .phase-hint{display:block !important}
+    th{font-size:11px}
+  }
 </style>
 </head>
 <body>
@@ -170,10 +180,13 @@
     <div class="card">
       <h2>🏆 Leaderboard</h2>
       <p class="sub">Live standings across all phases and bonuses.</p>
-      <table>
-        <thead><tr><th>#</th><th>Gambler</th><th>P1 Groups</th><th>P2 R32</th><th>P3 R16</th><th>P4 QF</th><th>Semis</th><th>Podium</th><th>Total</th></tr></thead>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table class="board-table">
+        <thead><tr><th>#</th><th>Gambler</th><th class="phase-col">P1 Groups</th><th class="phase-col">P2 R32</th><th class="phase-col">P3 R16</th><th class="phase-col">P4 QF</th><th class="phase-col">Semis</th><th class="phase-col">Podium</th><th>Total</th></tr></thead>
         <tbody id="boardBody"></tbody>
       </table>
+      </div>
+      <p class="sub phase-hint" style="display:none;margin-top:8px">Tap a name below for the full phase-by-phase breakdown.</p>
     </div>
     <div class="card" id="breakdownCard" style="display:none">
       <h2>Score breakdown</h2>
@@ -324,6 +337,11 @@ function renderGroupsEditor(){
 function editTeam(g,i,v){ S.groups[g][i]=v; save(); cloudTouchMeta(); }
 function seedTeams(){ if(!confirm("Reset all groups to the official 2026 World Cup teams? This overwrites any edits to team names."))return; GROUPS.forEach(g=>S.groups[g]=OFFICIAL[g].slice()); save(); cloudTouchMeta(); renderGroupsEditor(); }
 function allTeams(){ let t=[]; GROUPS.forEach(g=>t=t.concat(S.groups[g])); return t.filter(x=>x&&x.trim()); }
+// Teams still alive in the knockout (from the R32 bracket). Falls back to all teams until the bracket exists.
+function qualifiedTeams(){
+  const set=new Set(); (S.rounds.r32||[]).forEach(m=>{ if(m){ if(m.a)set.add(m.a); if(m.b)set.add(m.b); } });
+  const arr=[...set]; return arr.length? arr : allTeams();
+}
 
 /* ============================== SETUP: GAMBLERS ============================== */
 function addGambler(){
@@ -389,7 +407,7 @@ function renderPredict(){
   const cs=card("Bonus — Semifinalists","Pick the 4 teams you think will reach the semi-finals. Lock before Phase 3 (Round of 16) starts.");
   const sf=p.preds.semis||[];
   for(let i=0;i<4;i++){
-    cs.appendChild(teamPicker(allTeams(),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); cloudTouchGambler(p); },`Semifinalist ${i+1}`));
+    cs.appendChild(teamPicker(qualifiedTeams(),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); cloudTouchGambler(p); },`Semifinalist ${i+1}`));
   }
   body.appendChild(cs);
 
@@ -398,7 +416,7 @@ function renderPredict(){
   /* Podium bonus */
   const cp=card("Bonus — Podium (30 pts)","Pick the final 1st, 2nd and 3rd place of the World Cup.");
   ["🥇 Champion (1st)","🥈 Runner-up (2nd)","🥉 Third place"].forEach((lbl,i)=>{
-    cp.appendChild(teamPicker(allTeams(),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); cloudTouchGambler(p); },lbl));
+    cp.appendChild(teamPicker(qualifiedTeams(),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); cloudTouchGambler(p); },lbl));
   });
   body.appendChild(cp);
 }
@@ -458,7 +476,7 @@ function renderResults(){
 
   /* Semifinalists actual */
   const cs=card("Bonus — Actual semifinalists","The 4 teams that actually reached the semi-finals.");
-  for(let i=0;i<4;i++){ cs.appendChild(teamPicker(allTeams(),(S.results.semis||[])[i]||"",v=>{S.results.semis[i]=v;save();cloudTouchMeta();renderBoard();},`Semifinalist ${i+1}`)); }
+  for(let i=0;i<4;i++){ cs.appendChild(teamPicker(qualifiedTeams(),(S.results.semis||[])[i]||"",v=>{S.results.semis[i]=v;save();cloudTouchMeta();renderBoard();},`Semifinalist ${i+1}`)); }
   body.appendChild(cs);
 
   body.appendChild(koResultCard("qf","Phase 4 — Quarter-finals",4));
@@ -466,7 +484,7 @@ function renderResults(){
   /* Podium actual */
   const cp=card("Bonus — Actual podium","Final 1st / 2nd / 3rd of the Cup.");
   ["🥇 Champion","🥈 Runner-up","🥉 Third place"].forEach((lbl,i)=>{
-    cp.appendChild(teamPicker(allTeams(),(S.results.podium||[])[i]||"",v=>{S.results.podium[i]=v;save();cloudTouchMeta();renderBoard();},lbl));
+    cp.appendChild(teamPicker(qualifiedTeams(),(S.results.podium||[])[i]||"",v=>{S.results.podium[i]=v;save();cloudTouchMeta();renderBoard();},lbl));
   });
   body.appendChild(cp);
 }
@@ -609,8 +627,8 @@ function renderBoard(){
     const tr=document.createElement("tr"); tr.className="lb-row";
     const medal=i===0?"🥇":i===1?"🥈":i===2?"🥉":(i+1);
     tr.innerHTML=`<td>${medal}</td><td>${esc(r.p.name)}</td>
-      <td>${fmt(r.s.groups)}</td><td>${fmt(r.s.r32)}</td><td>${fmt(r.s.r16)}</td><td>${fmt(r.s.qf)}</td>
-      <td>${fmt(r.s.semis)}</td><td class="gold-text">${fmt(r.s.podium)}</td>
+      <td class="phase-col">${fmt(r.s.groups)}</td><td class="phase-col">${fmt(r.s.r32)}</td><td class="phase-col">${fmt(r.s.r16)}</td><td class="phase-col">${fmt(r.s.qf)}</td>
+      <td class="phase-col">${fmt(r.s.semis)}</td><td class="phase-col gold-text">${fmt(r.s.podium)}</td>
       <td><b class="score-mini" style="font-size:16px;color:var(--green)">${fmt(r.s.total)}</b></td>`;
     tb.appendChild(tr);
   });
