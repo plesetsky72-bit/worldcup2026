@@ -407,7 +407,7 @@ function renderPredict(){
   const cs=card("Bonus — Semifinalists","Pick the 4 teams you think will reach the semi-finals. Lock before Phase 3 (Round of 16) starts.");
   const sf=p.preds.semis||[];
   for(let i=0;i<4;i++){
-    cs.appendChild(teamPicker(qualifiedTeams(),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); cloudTouchGambler(p); },`Semifinalist ${i+1}`));
+    cs.appendChild(teamPicker(gamblerQualified(p),sf[i]||"",v=>{ p.preds.semis[i]=v; save(); cloudTouchGambler(p); },`Semifinalist ${i+1}`));
   }
   body.appendChild(cs);
 
@@ -416,17 +416,24 @@ function renderPredict(){
   /* Podium bonus */
   const cp=card("Bonus — Podium (30 pts)","Pick the final 1st, 2nd and 3rd place of the World Cup.");
   ["🥇 Champion (1st)","🥈 Runner-up (2nd)","🥉 Third place"].forEach((lbl,i)=>{
-    cp.appendChild(teamPicker(qualifiedTeams(),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); cloudTouchGambler(p); },lbl));
+    cp.appendChild(teamPicker(gamblerQualified(p),(p.preds.podium||[])[i]||"",v=>{ p.preds.podium[i]=v; save(); cloudTouchGambler(p); },lbl));
   });
   body.appendChild(cp);
 }
 function setGroupPred(g,pos,v){ const p=curGambler(); if(!p.preds.groups[g])p.preds.groups[g]=["","","",""]; p.preds.groups[g][pos]=v; save(); cloudTouchGambler(p); }
 
-const ROUND_COUNTS={r32:16,r16:8,qf:4};
+const KO_FEEDER={r16:"Round of 32", qf:"Round of 16"};
 function knockoutPredCard(key,title,p){
-  const matches=S.rounds[key]||[];
-  const count=ROUND_COUNTS[key]||matches.length;                 // always show the full round (QF=4, R16=8, R32=16)
+  const matches=gamblerMatchups(p,key);                          // THIS player's own bracket (from their predictions)
+  const count=matches.length;                                    // r32=16, r16=8, qf=4
   const anyDefined=matches.some(m=>m&&m.a&&m.b);
+  if(!anyDefined){ const c=card(title, key==="r32"
+      ? "Your matchups come from your predicted group standings."
+      : `Your matchups come from the ${KO_FEEDER[key]} winners you pick above.`);
+    const e=document.createElement("div"); e.className="empty";
+    e.textContent = key==="r32" ? "Fill in your group standings (Phase 1) above to build your bracket."
+      : `Pick your ${KO_FEEDER[key]} winners first — then these matchups appear.`;
+    c.appendChild(e); return c; }
   const c=card(title, anyDefined? "Pick the winner of each match."
     : "Matchups appear here once the previous round is decided — auto-filled from live scores, or set by the organiser in the Results tab.");
   for(let i=0;i<count;i++){
@@ -441,13 +448,14 @@ function knockoutPredCard(key,title,p){
           <option ${pick===m.b?'selected':''}>${esc(m.b)}</option>
         </select>`;
     } else {
-      d.innerHTML=`<span class="vs">M${i+1}</span><span class="muted" style="font-size:13px">teams to be decided</span>`;
+      d.innerHTML=`<span class="vs">M${i+1}</span><span class="muted" style="font-size:13px">pick the earlier round to reveal this matchup</span>`;
     }
     c.appendChild(d);
   }
   return c;
 }
-function setKO(key,i,v){ const p=curGambler(); if(!p.preds[key])p.preds[key]={}; p.preds[key][i]=v; save(); cloudTouchGambler(p); }
+function setKO(key,i,v){ const p=curGambler(); if(!p.preds[key])p.preds[key]={}; p.preds[key][i]=v; save(); cloudTouchGambler(p);
+  const y=window.scrollY; renderPredict(); window.scrollTo(0,y); }   // re-derive downstream rounds from the new pick
 
 /* ============================== RESULTS (admin) ============================== */
 function renderResults(){
@@ -589,6 +597,30 @@ function advanceBracket(silent){
     alert("Round of 16 & Quarter-final matchups rebuilt from the winners entered ✓\nEmpty slots just mean that match hasn't been decided yet."); }
 }
 
+/* ---- Per-gambler PREDICTED bracket (full upfront model) ----
+   Each player's knockout matchups flow from their OWN predictions:
+   predicted group standings -> their R32 -> (their picks) -> their R16 -> their QF. */
+function nextRoundMatchups(prev, picks){ picks=picks||{}; const out=[];
+  for(let i=0;i<Math.floor(prev.length/2);i++) out.push({a:picks[2*i]||"", b:picks[2*i+1]||""});
+  return out; }
+function gamblerR32(p){
+  const g=(p&&p.preds&&p.preds.groups)||{};
+  const pool=GROUPS.map(gr=>{ const t=(g[gr]||[])[2]; return t?{g:gr,team:t}:null; }).filter(Boolean);
+  const fill=slot=>{
+    if(slot.t==="1") return (g[slot.g]||[])[0]||"";
+    if(slot.t==="2") return (g[slot.g]||[])[1]||"";
+    const i=pool.findIndex(x=>slot.groups.includes(x.g)); return i>=0?pool.splice(i,1)[0].team:"";
+  };
+  return R32_TEMPLATE.map(([a,b])=>({a:fill(a),b:fill(b)}));
+}
+function gamblerMatchups(p,key){
+  const r32=gamblerR32(p); if(key==="r32") return r32;
+  const r16=nextRoundMatchups(r32,(p.preds||{}).r32); if(key==="r16") return r16;
+  return nextRoundMatchups(r16,(p.preds||{}).r16); // qf
+}
+function gamblerQualified(p){ const s=new Set(); gamblerR32(p).forEach(m=>{ if(m.a)s.add(m.a); if(m.b)s.add(m.b); });
+  const a=[...s]; return a.length? a : allTeams(); }
+
 /* ============================== SCORING ============================== */
 function scoreGambler(p){
   const cfg=S.config; const d={groups:0,r32:0,r16:0,qf:0,semis:0,podium:0,detail:[]};
@@ -604,10 +636,12 @@ function scoreGambler(p){
     let exact=res[0]&&res[1]&&res[2]&&pred[0]===res[0]&&pred[1]===res[1]&&pred[2]===res[2];
     if(exact)d.groups+=cfg.order;
   });
-  // Knockouts
+  // Knockouts — full-bracket scoring: +1 per team the player correctly picked to win its match
+  // (i.e. to advance), comparing their advancing-team set to the actual advancing-team set.
   [["r32",cfg.r32],["r16",cfg.r16],["qf",cfg.qf]].forEach(([key,pts])=>{
-    const preds=p.preds[key]||{}; const res=S.results[key]||{};
-    Object.keys(res).forEach(i=>{ if(res[i]&&preds[i]&&preds[i]===res[i])d[key]+=pts; });
+    const actual=new Set(Object.values(S.results[key]||{}).filter(Boolean));
+    const mine=new Set(Object.values(p.preds[key]||{}).filter(Boolean));
+    let hit=0; mine.forEach(t=>{ if(actual.has(t))hit++; }); d[key]+=hit*pts;
   });
   // Semifinalists
   const sfRes=(S.results.semis||[]).filter(Boolean);
